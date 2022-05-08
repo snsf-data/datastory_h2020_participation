@@ -1,0 +1,613 @@
+---
+params: 
+  title: ""
+  publication_date: ""
+  doi: ""
+output: 
+  html_document:
+    anchor_sections: false
+    highlight: null
+    mathjax: null
+    css: ["style.css", "https://fonts.googleapis.com/css?family=Source+Sans+Pro:400,700&display=swap"]
+    self_contained: true
+title: "`r params$title`"
+---
+
+```{r general-setup, include=FALSE}
+## This file contains the FRENCH version of the data story 
+
+# Set general chunk options
+knitr::opts_chunk$set(echo = FALSE, fig.showtext = TRUE, fig.retina = 3, 
+                      fig.align = "center", warning = FALSE, message = FALSE)
+
+# Install pacman package if needed
+if (!require("pacman")) {
+  install.packages("pacman")
+  library(pacman)
+}
+
+# Install snf.datastory package if not available, otherwise load it
+if (!require("snf.datastory")) {
+  if (!require("devtools")) {
+    install.packages("devtools")
+    library(devtools)
+  }
+  install_github("snsf-data/snf.datastory")
+  library(snf.datastory)
+}
+
+# Load packages
+p_load(tidyverse,
+       janitor,
+       lubridate,
+       scales,
+       conflicted,
+       jsonlite,
+       here,
+       yaml,
+       glue,
+       ggrepel,
+       readxl,
+       ggiraph)
+
+# Conflict preferences
+conflict_prefer("filter", "dplyr")
+conflict_prefer("get_datastory_theme", "snf.datastory")
+conflict_prefer("get_datastory_scheme", "snf.datastory")
+
+# Increase showtext package font resolution
+showtext_opts(dpi = 320)
+
+# Set the locale for date formatting (Windows)
+Sys.setlocale("LC_TIME", "French")
+
+# Create function to print number with local language-specific format 
+print_num <- function(x) snf.datastory::print_num(x, lang = "fr")
+
+# Knitr hook for local formatting of printed numbers
+knitr::knit_hooks$set(
+  inline <- function(x) {
+    if (!is.numeric(x)) {
+      x
+    } else {
+      print_num(x)
+    }
+  }
+)
+```
+
+```{r print-header-infos, results='asis'}
+# Add publication date to header
+cat(format(as_datetime(params$publication_date), "%d.%m.%Y"))
+
+# Register the Google font (same as Data Portal, is not loaded twice)
+cat(paste0("<link href='https://fonts.googleapis.com/css?family=", 
+           "Source+Sans+Pro:400,700&display=swap' rel='stylesheet'>"))
+```
+
+```{r story-specific-setup, include=FALSE}
+snf_pal <- get_datastory_scheme()
+
+df_schema <- here("data", "schema-cordis-plus.yml") %>%
+  read_yaml() %>%
+  as.list()
+
+# Read in country names with translations
+country_names <- read_csv(here("data", "country_names.csv"))
+
+df <-
+  list.files(here("data"), pattern = "cordis-plus-", full.names = TRUE) %>%
+  map_df(read_csv, col_types = df_schema) %>%
+  mutate(
+    pillar = fct_inseq(pillar),
+    pillar = fct_rev(pillar),
+    pillar = fct_relevel(pillar, "Cross-theme", after = 0),
+    pillar = fct_recode(
+      pillar, I = "1", II = "2", III = "3", IV = "4", V = "5"),
+    org_type = fct_collapse(
+      legal_entity_type,
+      `Research & Education` = c("HES", "REC"),
+      `Others (Excl. R&Ed)` = c("PRC", "PUB", "OTH")),
+    start_semester = floor_date(start_date, "6 months")) %>%
+    # removing most international organizations (CERN, WHO, ...)
+    filter(
+      !str_detect(legal_name, "EUROPEAN|MONDIALE|WORLD") |
+        !str_detect(legal_name, "ORGANIZATION|ORGANISATION|ASSOCIATION")
+    ) %>% 
+  # Add the translated country names
+  left_join(country_names, by = "country_code")
+
+h2020 <-
+  here("data", "horizon2020.xlsx") %>%
+  read_excel() %>%
+  clean_names() %>%
+  rename(project_id = project_nbr,
+         pic = general_pic) %>%
+  mutate(
+    legal_entity_type = str_sub(legal_entity_type, 1, 3),
+    country_code = str_sub(country_code, 1, 2),
+    # rename role
+    partner_role = str_to_title(partner_role),
+    pillar = str_extract(pillar_abbr, "\\d"),
+    pillar = if_else(pillar_abbr == "EU.0.", "Cross-theme", pillar),
+    pillar = if_else(pillar_abbr == "Euratom", pillar_abbr, pillar),
+    partner_role = str_to_lower(partner_role),
+    pillar = fct_inseq(pillar),
+    pillar = fct_rev(pillar),
+    pillar = fct_relevel(pillar, "Cross-theme", after = 0),
+    pillar = fct_recode(
+      pillar, I = "1", II = "2", III = "3", IV = "4", V = "5"),
+    org_type = fct_collapse(
+      legal_entity_type,
+      `Research & Education` = c("HES", "REC"),
+      `Private Companies` = "PRC",
+      `Others (Excl. R&Ed)` = c("PUB", "OTH")
+    ),
+    eu_contribution = str_replace(eu_contribution, fixed("-"), "0"),
+    eu_contribution = as.numeric(eu_contribution),
+    # country code
+    country_code = str_replace(country_code, "KO", "XK"),
+    # import dates
+    signature_date = as.Date(signature_date, format = "%d/%m/%Y"),
+    call_deadline_date = as.Date(call_deadline_date, format = "%d/%m/%Y"),
+    signature_year = str_sub(signature_date, 1, 4),
+    call_year = str_sub(call_deadline_date, 1, 4),
+    signature_year = as.integer(signature_year),
+    call_year = as.integer(call_year),
+    call_semester = floor_date(call_deadline_date, "6 months")
+  ) %>%
+  # removing most international organizations (CERN, WHO, ...)
+  filter(
+    !str_detect(legal_name, "EUROPEAN|MONDIALE|WORLD") |
+      !str_detect(legal_name, "ORGANIZATION|ORGANISATION|ASSOCIATION")
+  ) %>% 
+  # Add the translated country names
+  left_join(country_names, by = "country_code")
+```
+
+<!-- Short lead (2-3 sentences) in bold -->
+
+__Les chiffres nouvellement calculés illustrent la forte baisse des contributions des programmes de l'UE aux institutions suisses entre 2014 et 2017. Ils témoignent également de la pertinence de la Suisse et du Royaume-Uni en termes d'excellence scientifique.__
+
+L’initiative « <a href="https://stick-to-science.eu" target="_blank">Stick to Science</a> » appelle à une réassociation rapide de la Suisse et du Royaume-Uni (UK) à Horizon Europe (HE), le programme-cadre européen pour la recherche et l'innovation (2021-2027). Pour la Suisse, cela fait suite à la suspension de la participation du pays, annoncée par l'UE le 17 juin 2021, après l'arrêt des pourparlers sur la signature d'un nouvel <a href="https://www.admin.ch/gov/fr/accueil/documentation/communiques.msg-id-83705.html" target="_blank">accord institutionnel Suisse-UE</a> le 26 mai 2021, et un mois après le lancement d'Horizon Europe le 12 mai 2021. Depuis 2004, par le biais d'accords bilatéraux avec l'UE sur la recherche et l’éducation, la communauté suisse de la recherche a participé activement aux programmes de recherche européens jusqu'à Horizon 2020 (H2020), qui s'est achevé en décembre 2020. L'UE n'a pas encore publié une évaluation finale d'Horizon 2020. Le nouveau portail de statistiques de l'UE, « <a href="https://webgate.ec.europa.eu/dashboard" target="_blank">Horizon Dashboard</a> », ne contient que des statistiques limitées sur la participation nationale. Côté suisse, les  <a href="https://www.sbfi.admin.ch/sbfi/de/home/forschung-und-innovation/internationale-f-und-i-zusammenarbeit/forschungsrahmenprogramme-der-eu/z-f-schweizer-beteiligung.html" target="_blank">chiffres officiels</a> de participation datent de janvier 2021 et se basent sur des données qui ne sont pas toujours accessibles au public. Notre objectif est donc de résumer la participation de la Suisse aux programmes de l'UE sur la base des <a href="https://zambujo.github.io/swissparticipation/data-gathering.html" target="_blank">dernières données publiquement disponibles</a>.
+
+:::info-box	
+
+### Programmes de financement de l'UE pour la recherche et l'innovation
+
+Près d'un dixième du <a href="https://op.europa.eu/en/publication-detail/-/publication/d2cf202e-f36a-45b2-84e7-1ac6ad996e90" target="_blank">Cadre Financier Pluriannuel (CFP)</a> de l'Union européenne est consacré à la recherche et à l'innovation. Cette section du budget, également appelée programme-cadre (PC) pour la recherche et l'innovation, vise à renforcer l'Espace européen de la recherche.
+
+Les programmes sont gérés par la direction générale de la recherche et de l'innovation et par un certain nombre d'agences exécutives. Le 7e PC fait référence au septième programme-cadre et concerne le CFP 2007-2013. Le 8e PC, appelé Horizon 2020 (H2020), fait référence au huitième programme-cadre et concerne le CFP 2014-2020. Le programme actuel, le 9e PC, est également appelé Horizon Europe (HE) et concerne le CFP 2021-2027.
+
+:::
+
+### Participation suisse
+
+La Suisse est devenue pleinement associée au programme-cadre en 2004. Concrètement, la Suisse a pu contribuer et puiser dans le budget des programmes-cadres de l'UE. Les contributions de la Suisse ont été déterminées par le rapport entre son produit intérieur brut (PIB) et celui des États membres de l'UE. À leur tour, les rétributions ont été le résultat de la compétitivité des participant·es suisses au programme. Cependant, son statut de pays associé est remis en cause depuis le début de H2020. La Suisse a été initialement exclue en 2014 en raison de l'adoption de l'initiative populaire « Contre l'immigration de masse ». En 2015, elle a obtenu un statut d'association partielle et, lors de la révision de la loi sur l'immigration en 2017, a retrouvé son statut d'association à part entière. En 2021, son statut d'association a de nouveau été mis à mal par un revers dans les négociations sur un nouvel accord-cadre institutionnel Suisse-UE.
+
+Un examen plus approfondi des contributions de l'UE à la Suisse au cours du 7e PC et de H2020 révèle une baisse temporaire mais marquée entre 2014 et 2017. La période coïncide avec l'exclusion et l'association partielle à H2020. Le niveau record de participation suisse en 2022 s'explique en partie par le décalage entre les échéances des derniers appels H2020 et les dates de démarrage des projets.
+
+
+<div class="plot-box" id="semester-contributions">
+<div class="plot-title">Part des contributions de l'UE (%) obtenues par les participant·es suisses, par semestre de la date de début du projet</div>
+
+```{r}
+get_particip <- function(x) {
+  ch <- x %>%
+    filter(country_code == "CH") %>%
+    group_by(framework_programme, time_period = start_semester) %>%
+    summarise(n_ch = n(),
+              contrib_ch = sum(re_contribution, na.rm = TRUE))
+  total <- x %>%
+    group_by(time_period = start_semester) %>%
+    summarise(n_total = n(),
+              contrib_all = sum(re_contribution, na.rm = TRUE))
+
+  ch2 <- x %>%
+    filter(country_code == "CH") %>%
+    filter(partner_role == "Coordinator") %>%
+    group_by(framework_programme, time_period = start_semester) %>%
+    summarise(coord_ch = n())
+  total2 <- x %>%
+    filter(partner_role == "Coordinator") %>%
+    count(time_period = start_semester, name = "coord_total")
+
+  coord <- left_join(total2, ch2, by = "time_period") %>%
+    mutate(share_coord = coord_ch / coord_total)
+
+  left_join(total, ch, by = "time_period") %>%
+    mutate(
+      share_particip = n_ch / n_total,
+      share_contrib = contrib_ch / contrib_all
+    ) %>%
+    left_join(coord, by = c("time_period", "framework_programme")) %>%
+    filter(!is.na(framework_programme))
+}
+
+ggplot_plot <- df %>%
+  get_particip() %>%
+  mutate(framework_programme = if_else(framework_programme == "FP7", 
+                                       "7e PC", 
+                                       framework_programme)) %>% 
+  mutate(data_id = row_number()) %>%
+  ggplot(
+    aes(
+      x = time_period,
+      y = share_contrib,
+      fill = framework_programme,
+      tooltip = paste0(
+        "Semestre : ", time_period, "<br>",
+        "Programm : ", framework_programme, "<br>",
+        "Contribution : <b>", round(100 * share_contrib, 1), " &percnt;</b>"),
+      data_id = share_contrib
+    )
+  ) +
+  geom_bar_interactive(position = "stack", stat = "identity") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_fill_manual(values = snf_pal) +
+  get_datastory_theme()
+
+girafe(
+  ggobj = ggplot_plot,
+  height_svg = 4,
+  options = list(
+    opts_toolbar(saveaspng = FALSE),
+    opts_hover(css = "fill:#F08262;stroke:#F08262;"),
+    opts_tooltip(
+      css = get_ggiraph_tooltip_css(),
+      opacity = 0.8,
+      delay_mouseover = 0,
+      delay_mouseout = 0
+    )
+  )
+)
+```
+
+<div class="caption">
+Données : <a href="https://data.europa.eu/data/datasets/cordisfp7projects" target="_blank">CORDIS FP7 projects</a> und <a href="https://data.europa.eu/data/datasets/cordish2020projects" target="_blank">CORDIS H2020 projects</a>.
+</div>
+</div>
+
+### Principaux pays participants {.tabset .tabset-fade .tabset-pills}
+
+Par rapport au 7e PC, la Suisse a perdu deux positions parmi les principaux pays participants en termes de contributions H2020 de l'UE. L'association tardive à H2020 est la raison la plus probable d'une baisse de 0,8 point de pourcentage (p.p.) de la proportion des contributions H2020 de l'UE, de 4,2 % dans le 7e PC à 3,4 % dans H2020. A l'inverse, la Belgique gagne une position. Les contributions de l'UE à la Belgique ont augmenté de 0,8 pp, passant de 4,1 % dans le 7e PC à 4,9 % dans H2020. L'Espagne est le pays pour lequel les contributions ont le plus augmenté avec une hausse de 2,2 p.p., passant de 7,2 % dans le 7e PC à 9,4 % dans H2020.
+
+#### 7e PC (2007-2013)
+
+<div class="plot-box" id="fp7-share">
+
+<div class="plot-title">Principaux pays participants par contribution de l'UE dans le cadre du 7e PC</div>
+
+```{r}
+top_participants <- df %>%
+  filter(framework_programme == "FP7") %>%
+  group_by(country_fr) %>%
+  summarise(contrib_country = sum(re_contribution, na.rm = TRUE)) %>%
+  ungroup() %>%
+  arrange(desc(contrib_country))
+
+ch_rank <- which(pull(top_participants, country_fr) == "Suisse")
+
+pal <- c(
+  rep(snf_pal[2], ch_rank - 1),
+  snf_pal[1],
+  rep(snf_pal[2], 15 - ch_rank)) %>%
+  rev()
+
+ggplot_plot <- top_participants %>%
+  mutate(
+    country_fr = fct_rev(fct_inorder(country_fr)),
+    share = 100 * prop.table(contrib_country),
+    data_id = row_number()
+  ) %>%
+  head(15) %>%
+  ggplot(aes(
+    x = contrib_country,
+    y = country_fr,
+    fill = country_fr,
+    tooltip = paste0(
+      "Pays : ", country_fr, "<br>",
+      "Part : <b>", print_num(round(share, 1)), " &percnt;</b>"),
+    data_id = share
+)) +
+  geom_col_interactive() +
+  geom_text_interactive(
+    aes(label = paste0(print_num(round(share, 1)), "%")),
+    family = "Source Sans Pro", 
+    hjust = 1.15,
+    size = 3
+  ) +
+  labs(x = NULL, y = NULL) +
+  scale_fill_manual(values = pal, guide = "none") +
+  get_datastory_theme(text_axis = NULL) +
+  theme(
+    plot.margin = margin(c(4, 2, 4, 8)),
+    axis.text.y = element_text(
+      margin = margin(t = 0, r = -10, b = 0, l = 5),
+      size = 12,
+      hjust = 1
+    )
+  )
+
+girafe(
+  ggobj = ggplot_plot,
+  height_svg = 4,
+  options = list(
+    opts_toolbar(saveaspng = FALSE),
+    opts_hover(css = "fill:#F08262;stroke:#F08262;"),
+    opts_tooltip(
+      css = get_ggiraph_tooltip_css(),
+      opacity = 0.8,
+      delay_mouseover = 0,
+      delay_mouseout = 0
+    )
+  )
+)
+```
+
+<div class="caption">
+Données: <a href="https://data.europa.eu/data/datasets/cordisfp7projects" target="_blank">CORDIS FP7 projects</a>.
+</div>
+</div>
+
+
+#### H2020 (2014-2020)
+
+<div class="plot-box" id="h2020-share">
+
+<div class="plot-title">Principaux pays participants par contribution de l'UE dans le cadre d'H2020</div>
+
+```{r}
+top_participants <- h2020 %>%
+  filter(framework_programme == "H2020") %>%
+  group_by(country_fr) %>%
+  summarise(contrib_country = sum(eu_contribution, na.rm = TRUE)) %>%
+  ungroup() %>%
+  arrange(desc(contrib_country))
+
+ch_rank <- which(pull(top_participants, country_fr) == "Suisse")
+
+pal <- c(
+  rep(snf_pal[2], ch_rank - 1),
+  snf_pal[1],
+  rep(snf_pal[2], 15 - ch_rank)) %>%
+  rev()
+
+ggplot_plot <- top_participants %>%
+  mutate(
+    country_fr = fct_rev(fct_inorder(country_fr)),
+    share = 100 * prop.table(contrib_country),
+    data_id = row_number()
+  ) %>%
+  head(15) %>%
+  ggplot(aes(
+    x = contrib_country,
+    y = country_fr,
+    fill = country_fr,
+    tooltip = paste0(
+      "Pays : ", country_fr, "<br>",
+      "Part : <b>", print_num(round(share, 1)), "&percnt;</b>"),
+    data_id = share
+)) +
+  geom_col_interactive() +
+  geom_text_interactive(
+    aes(label = paste0(print_num(round(share, 1)), "%")),
+    hjust = 1.15,
+    family = "Source Sans Pro", 
+    size = 3
+  ) +
+  labs(x = NULL, y = NULL) +
+  scale_fill_manual(values = pal, guide = "none") +
+  get_datastory_theme(text_axis = NULL) + 
+  theme(
+    plot.margin = margin(c(4, 2, 4, 8)),
+    axis.text.y = element_text(
+      margin = margin(t = 0, r = -10, b = 0, l = 5),
+      size = 12,
+      hjust = 1
+    )
+  )
+
+girafe(
+  ggobj = ggplot_plot,
+  height_svg = 4,
+  options = list(
+    opts_toolbar(saveaspng = FALSE),
+    opts_hover(css = "fill:#F08262;stroke:#F08262;"),
+    opts_tooltip(
+      css = get_ggiraph_tooltip_css(),
+      opacity = 0.8,
+      delay_mouseover = 0,
+      delay_mouseout = 0
+    )
+  )
+)
+```
+
+<div class="caption">
+Données : <a href="https://webgate.ec.europa.eu/dashboard" target="_blank">Horizon Dashboard</a>.
+</div>
+</div>
+
+
+###  Structure d’H2020 {.tabset .tabset-fade .tabset-pills}
+
+Les programmes-cadres sont divisés en priorités/sections et scindés en instruments de financement/prévalences thématiques. H2020, en particulier, comportait trois grandes priorités :
+
+  - Priorité I, sur l'Excellence scientifique, visant à renforcer la compétitivité scientifique européenne à l'échelle mondiale, a reçu 36 % du budget ;
+  - Priorité II, sur la Primauté industrielle, visant à maximiser la compétitivité des entreprises et des PME européennes, a reçu 20 % du budget ;
+  - Priorité III, sur les Défis sociétaux, visant à répondre aux principales priorités politiques et sociales de l'Europe, a reçu 39 % du budget.
+
+Dans le cas de la Suisse, la répartition des contributions de l'UE obtenues dans H2020 semble remarquablement favoriser la Priorité I, sur l'Excellence scientifique, avec une part de 64,3 % du budget.
+
+En outre, les contributions du Conseil européen de la recherche (ERC), l'instrument phare de la Priorité I, sur l'Excellence scientifique, ont représenté plus de 40% des contributions totales de l'UE à la Suisse. L’ERC est le seul instrument de financement du programme-cadre où l'excellence scientifique est le seul critère de sélection. En substance, la part relative des contributions de l'ERC pour la Suisse a dépassé celle de la Priorité I pour tous les pays.
+
+#### Tous les pays
+
+<div class="plot-box" id="h2020-overall">
+
+<div class="plot-title">Contributions globales de l'UE à tous les pays par priorités et instrument de financement</div>
+
+```{r, dev='svg'}
+knitr::include_graphics(here("data", "treemap-h2020-all.svg"))
+```
+
+<div class="caption">
+Données : <a href="https://webgate.ec.europa.eu/dashboard" target="_blank">Horizon Dashboard</a>.
+</div>
+</div>
+
+#### Suisse
+
+<div class="plot-box" id="h2020-switzerland">
+
+<div class="plot-title">Contributions de l'UE à la Suisse par priorité et instrument de financement</div>
+
+```{r, dev='svg'}
+knitr::include_graphics(here("data", "treemap-h2020-ch.svg"))
+```
+
+<div class="caption">
+Données : <a href="https://webgate.ec.europa.eu/dashboard" target="_blank">Horizon Dashboard</a>.
+</div>
+</div>
+
+### Profil de participation : viser l'excellence
+
+Parmi les principaux pays participants à H2020, la Suisse, Israël et le Royaume-Uni ont été les seuls pays à avoir obtenu plus de la moitié des contributions de l'UE de la Priorité I, sur l'Excellence scientifique. Le poids de la Priorité I dans les trois pays souligne l'engagement et la contribution de leurs communautés de recherche à l'excellence scientifique.
+
+<div class="plot-box" id="participation-profiles">
+
+<div class="plot-title">Contributions de l'UE : la priorité de l'Excellence scientifique versus les institutions de recherche et d'enseignement supérieur</div>
+
+```{r}
+pal <- c(
+  rep(snf_pal[2], ch_rank - 1),
+  snf_pal[1],
+  rep(snf_pal[2], 15 - ch_rank))
+
+## share to Pillar I
+contribution_share_pillar <- h2020 %>%
+  group_by(
+    country_fr,
+    Pillar = pillar
+  ) %>%
+  summarise(`Contribution` = sum(eu_contribution)) %>%
+  mutate(share_pillar = 100 * prop.table(Contribution)) %>%
+  filter(Pillar == "I") %>%
+  select(-Pillar, -Contribution)
+
+## share to Resesearch and HigherEd
+contribution_share_reshed <- h2020 %>%
+  group_by(
+    country_fr,
+    Type = org_type
+  ) %>%
+  summarise(`Contribution` = sum(eu_contribution)) %>%
+  mutate(share_reshed = 100 * prop.table(Contribution)) %>%
+  filter(Type == "Research & Education") %>%
+  select(-Type, -Contribution)
+
+ggplot_plot <- top_participants %>%
+  inner_join(contribution_share_reshed, by = c("country_fr")) %>%
+  inner_join(contribution_share_pillar, by = c("country_fr")) %>%
+  head(15) %>%
+  mutate(country_fr = fct_rev(fct_inorder(country_fr)),
+         contrib_country = contrib_country / 1000000) %>%
+  ggplot(
+    aes(
+      x = share_pillar,
+      y = share_reshed,
+      label = country_fr,
+      col = country_fr,
+      size = contrib_country
+    )
+  ) +
+  geom_text_repel_interactive(
+    aes(
+      tooltip = paste0("<b>", country_fr, "</b><br>",
+                       print_num(round(contrib_country, 0)), " mio EUR"),
+      data_id = country_fr
+    ),
+    size = 4,
+    show.legend = FALSE,
+    family = "Source Sans Pro", 
+    box.padding = .75
+  ) +
+  geom_point_interactive(aes(
+    tooltip = paste0("<b>", country_fr, "</b><br>",
+                     print_num(round(contrib_country, 0)), " mio EUR"),
+    data_id = country_fr
+  )) +
+  guides(size = guide_legend(
+    title = "Contribution totale de l'UE (millions d'euros):",
+    override.aes = list(fill = "gray45", col = "gray45", shape = 21)
+  )) +
+  labs(
+    x = glue(
+      "Contributions à la Priorité I : Excellence scientifique",
+      "\n(% de la contribution totale au pays)"
+    ),
+    y = glue(
+      "Contribution aux institutions de recherche et\n", 
+      "d'enseignement supérieur(% de la contribution totale au pays)"
+    )
+  ) +
+  scale_x_continuous(labels = percent_format(accuracy = 1, scale = 1)) +
+  scale_y_continuous(labels = percent_format(accuracy = 1, scale = 1)) +
+  scale_color_manual(values = rev(pal), guide = "none") +
+  theme_minimal() +
+  theme(
+    text = element_text(color = "#22211d",
+                        family = "Source Sans Pro"),
+    plot.title.position = "plot",
+    legend.position = "top",
+  )
+
+girafe(
+  ggobj = ggplot_plot,
+  height_svg = 4.25,
+  options = list(
+    opts_toolbar(saveaspng = FALSE),
+    opts_hover(css = "fill:#F08262;stroke:#F08262;"),
+    opts_tooltip(
+      css = get_ggiraph_tooltip_css(),
+      opacity = 0.8,
+      delay_mouseover = 0,
+      delay_mouseout = 0
+    )
+  )
+)
+
+```
+
+<div class="caption">
+Données : <a href="https://webgate.ec.europa.eu/dashboard" target="_blank">Horizon Dashboard</a>.
+</div>
+</div>
+
+En outre, la Suisse et le Royaume-Uni sont les seuls pays où les établissements de recherche et d'enseignement supérieur ont reçu plus des trois quarts des contributions de l'UE. À l'inverse, la Suisse et le Royaume-Uni ont la part la plus faible de contributions de l'UE finançant des entreprises privées à but lucratif.
+
+### Perspectives : Suisse, Royaume-Uni et Horizon Europe
+
+Par rapport à Horizon 2020, le budget d'Horizon Europe suggère que l'UE s'est désengagée de la Priorité I sur l'Excellence scientifique en termes à la fois relatifs et absolus. En outre, la Suisse et le Royaume-Uni n'ont eu jusqu'à présent qu'un accès limité à Horizon Europe en tant que pays non associés, compte tenu de l'arrêt des pourparlers en juin 2021 pour la Suisse et le futur incertain après le Brexit pour le Royaume-Uni. S'ils restent largement exclus, Horizon Europe pourrait constituer un pas en arrière dans l'amélioration de la compétitivité mondiale de la recherche européenne. Les deux pays ont été des acteurs clés de la Priorité I sur l'Excellence scientifique et ont ainsi apporté une contribution importante à la compétitivité de la recherche européenne.
+
+<div class="plot-box" id="he-planned">
+
+<div class="plot-title">Budget Horizon Europe</div>
+
+```{r, dev='svg'}
+knitr::include_graphics(here("data", "treemap-he.svg"))
+```
+
+<div class="caption">
+Données : <a href="https://op.europa.eu/en/publication-detail/-/publication/1f107d76-acbe-11eb-9767-01aa75ed71a1" target="_blank">Horizon Europe</a>.
+</div>
+</div>
+
+Pour les chercheuses et chercheurs affiliés à des institutions suisses, l'exclusion d’Horizon Europe entraîne soit des conditions de participation défavorables (ex : pas de coordination de projet), soit une exclusion pure et simple des instruments de financement. L'exclusion concerne en particulier les instruments de financement de la Priorité I, sur l'Excellence scientifique, la priorité la plus importante pour la Suisse dans les programmes précédents.
+
+L'exclusion de la Suisse d'Horizon Europe empêche un accord gagnant-gagnant pour la collaboration en matière de recherche. Combiné à l'exclusion du Royaume-Uni, cela pourrait conduire à un sérieux revers pour le renforcement de l'Espace européen de la recherche. L’initiative « <a href="https://stick-to-science.eu" target="_blank">Stick to Science</a> » vise autant à défendre les intérêts de la Suisse et du Royaume-Uni qu'à défendre la recherche européenne dans son ensemble.
+
+
+Les données, le texte et le code de ce récit de données sont <a href="https://github.com/snsf-data/datastory_h2020_participation" target="_blank">disponibles sur Github</a> et <a href="https://doi.org/10.46446/datastory.h2020-participation" target="_blank">archivés sur Zenodo</a>. DOI: 10.46446/datastory.h2020-participation
